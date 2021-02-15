@@ -53,42 +53,8 @@ static EFI_GUID DevicePathGUID = DEVICE_PATH_PROTOCOL;
 static EFI_GUID LoadedImageGUID = LOADED_IMAGE_PROTOCOL;
 static EFI_GUID ConsoleControlGUID = EFI_CONSOLE_CONTROL_PROTOCOL_GUID;
 
-/*
- * Provide Malloc / Free / Calloc backed by EFIs AllocatePool / FreePool which ensures
- * memory is correctly aligned avoiding EFI_INVALID_PARAMETER returns from
- * EFI methods.
- */
-
-void *
-Malloc(size_t len, const char *file __unused, int line __unused)
-{
-	void *out;
-
-	if (BS->AllocatePool(EfiLoaderData, len, &out) == EFI_SUCCESS)
-		return (out);
-
-	return (NULL);
-}
-
-void
-Free(void *buf, const char *file __unused, int line __unused)
-{
-	if (buf != NULL)
-		(void)BS->FreePool(buf);
-}
-
-void *
-Calloc(size_t n1, size_t n2, const char *file, int line)
-{
-	size_t bytes;
-	void *res;
-
-	bytes = n1 * n2;
-	if ((res = Malloc(bytes, file, line)) != NULL)
-		bzero(res, bytes);
-
-	return (res);
-}
+static EFI_PHYSICAL_ADDRESS heap;
+static UINTN heapsize;
 
 /*
  * try_boot only returns if it fails to load the loader. If it succeeds
@@ -137,8 +103,9 @@ try_boot(const boot_module_t *mod, dev_info_t *dev, void *loaderbuf, size_t load
 		goto errout;
 	}
 
-	if ((status = BS->HandleProtocol(loaderhandle, &LoadedImageGUID,
-	    (VOID**)&loaded_image)) != EFI_SUCCESS) {
+	status = OpenProtocolByHandle(loaderhandle, &LoadedImageGUID,
+	    (void **)&loaded_image);
+	if (status != EFI_SUCCESS) {
 		printf("Failed to query LoadedImage provided by %s (%lu)\n",
 		    mod->name, EFI_ERROR_CODE(status));
 		goto errout;
@@ -200,6 +167,18 @@ efi_main(EFI_HANDLE Ximage, EFI_SYSTEM_TABLE *Xsystab)
 	BS = ST->BootServices;
 	RS = ST->RuntimeServices;
 
+	heapsize = 64 * 1024 * 1024;
+	status = BS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+	    EFI_SIZE_TO_PAGES(heapsize), &heap);
+	if (status != EFI_SUCCESS) {
+		ST->ConOut->OutputString(ST->ConOut,
+		    __DECONST(CHAR16 *,
+		    L"Failed to allocate memory for heap.\r\n"));
+		BS->Exit(IH, status, 0, NULL);
+	}
+
+	setheap((void *)(uintptr_t)heap, (void *)(uintptr_t)(heap + heapsize));
+
 	/* Set up the console, so printf works. */
 	status = BS->LocateProtocol(&ConsoleControlGUID, NULL,
 	    (VOID **)&ConsoleControl);
@@ -242,7 +221,7 @@ efi_main(EFI_HANDLE Ximage, EFI_SYSTEM_TABLE *Xsystab)
 	nhandles = hsize / sizeof(*handles);
 
 	/* Determine the devpath of our image so we can prefer it. */
-	status = BS->HandleProtocol(IH, &LoadedImageGUID, (VOID**)&img);
+	status = OpenProtocolByHandle(IH, &LoadedImageGUID, (void **)&img);
 	imgpath = NULL;
 	if (status == EFI_SUCCESS) {
 		text = efi_devpath_name(img->FilePath);
@@ -252,8 +231,8 @@ efi_main(EFI_HANDLE Ximage, EFI_SYSTEM_TABLE *Xsystab)
 			efi_free_devpath_name(text);
 		}
 
-		status = BS->HandleProtocol(img->DeviceHandle, &DevicePathGUID,
-		    (void **)&imgpath);
+		status = OpenProtocolByHandle(img->DeviceHandle,
+		    &DevicePathGUID, (void **)&imgpath);
 		if (status != EFI_SUCCESS) {
 			DPRINTF("Failed to get image DevicePath (%lu)\n",
 			    EFI_ERROR_CODE(status));
@@ -292,6 +271,20 @@ add_device(dev_info_t **devinfop, dev_info_t *devinfo)
 	dev->next = devinfo;
 }
 
+void
+efi_exit(EFI_STATUS s)
+{
+
+	BS->FreePages(heap, EFI_SIZE_TO_PAGES(heapsize));
+	BS->Exit(IH, s, 0, NULL);
+}
+
+void
+exit(int error __unused)
+{
+	efi_exit(EFI_LOAD_ERROR);
+}
+
 /*
  * OK. We totally give up. Exit back to EFI with a sensible status so
  * it can try the next option on the list.
@@ -307,7 +300,12 @@ efi_panic(EFI_STATUS s, const char *fmt, ...)
 	va_end(ap);
 	printf("\n");
 
-	BS->Exit(IH, s, 0, NULL);
+	efi_exit(s);
+}
+
+int getchar(void)
+{
+	return (-1);
 }
 
 void

@@ -1,8 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (C) 2018 Alexander Motin <mav@FreeBSD.org>
- * All rights reserved.
+ * Copyright (C) 2018-2019 Alexander Motin <mav@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,6 +39,7 @@ __FBSDID("$FreeBSD$");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sysexits.h>
 #include <unistd.h>
 
 #include "nvmecontrol.h"
@@ -117,7 +117,7 @@ format(const struct cmd *f, int argc, char *argv[])
 	struct nvme_controller_data	cd;
 	struct nvme_namespace_data	nsd;
 	struct nvme_pt_command		pt;
-	char				path[64];
+	char				*path;
 	const char			*target;
 	uint32_t			nsid;
 	int				lbaf, ms, pi, pil, ses, fd;
@@ -125,7 +125,7 @@ format(const struct cmd *f, int argc, char *argv[])
 	if (arg_parse(argc, argv, f))
 		return;
 
-	if (opt.Eflag || opt.Cflag || opt.ses != SES_NONE) {
+	if ((int)opt.Eflag + opt.Cflag + (opt.ses != SES_NONE) > 1) {
 		fprintf(stderr,
 		    "Only one of -E, -C or -s may be specified\n");
 		arg_help(argc, argv, f);
@@ -143,18 +143,9 @@ format(const struct cmd *f, int argc, char *argv[])
 	else
 		ses = opt.ses;
 
-	/*
-	 * Check if the specified device node exists before continuing.
-	 * This is a cleaner check for cases where the correct controller
-	 * is specified, but an invalid namespace on that controller.
-	 */
 	open_dev(target, &fd, 1, 1);
-
-	/*
-	 * If device node contains "ns", we consider it a namespace,
-	 * otherwise, consider it a controller.
-	 */
-	if (strstr(target, NVME_NS_PREFIX) == NULL) {
+	get_nsid(fd, &path, &nsid);
+	if (nsid == 0) {
 		nsid = NVME_GLOBAL_NAMESPACE_TAG;
 	} else {
 		/*
@@ -164,34 +155,36 @@ format(const struct cmd *f, int argc, char *argv[])
 		 * string to get the controller substring and namespace ID.
 		 */
 		close(fd);
-		parse_ns_str(target, path, &nsid);
 		open_dev(path, &fd, 1, 1);
 	}
+	free(path);
 
 	/* Check that controller can execute this command. */
-	read_controller_data(fd, &cd);
+	if (read_controller_data(fd, &cd))
+		errx(EX_IOERR, "Identify request failed");
 	if (((cd.oacs >> NVME_CTRLR_DATA_OACS_FORMAT_SHIFT) &
 	    NVME_CTRLR_DATA_OACS_FORMAT_MASK) == 0)
-		errx(1, "controller does not support format");
+		errx(EX_UNAVAILABLE, "controller does not support format");
 	if (((cd.fna >> NVME_CTRLR_DATA_FNA_CRYPTO_ERASE_SHIFT) &
 	    NVME_CTRLR_DATA_FNA_CRYPTO_ERASE_MASK) == 0 && ses == SES_CRYPTO)
-		errx(1, "controller does not support cryptographic erase");
+		errx(EX_UNAVAILABLE, "controller does not support cryptographic erase");
 
 	if (nsid != NVME_GLOBAL_NAMESPACE_TAG) {
 		if (((cd.fna >> NVME_CTRLR_DATA_FNA_FORMAT_ALL_SHIFT) &
 		    NVME_CTRLR_DATA_FNA_FORMAT_ALL_MASK) && ses == SES_NONE)
-			errx(1, "controller does not support per-NS format");
+			errx(EX_UNAVAILABLE, "controller does not support per-NS format");
 		if (((cd.fna >> NVME_CTRLR_DATA_FNA_ERASE_ALL_SHIFT) &
 		    NVME_CTRLR_DATA_FNA_ERASE_ALL_MASK) && ses != SES_NONE)
-			errx(1, "controller does not support per-NS erase");
+			errx(EX_UNAVAILABLE, "controller does not support per-NS erase");
 
 		/* Try to keep previous namespace parameters. */
-		read_namespace_data(fd, nsid, &nsd);
+		if (read_namespace_data(fd, nsid, &nsd))
+			errx(EX_IOERR, "Identify request failed");
 		if (lbaf < 0)
 			lbaf = (nsd.flbas >> NVME_NS_DATA_FLBAS_FORMAT_SHIFT)
 			    & NVME_NS_DATA_FLBAS_FORMAT_MASK;
 		if (lbaf > nsd.nlbaf)
-			errx(1, "LBA format is out of range");
+			errx(EX_USAGE, "LBA format is out of range");
 		if (ms < 0)
 			ms = (nsd.flbas >> NVME_NS_DATA_FLBAS_EXTENDED_SHIFT)
 			    & NVME_NS_DATA_FLBAS_EXTENDED_MASK;
@@ -221,10 +214,10 @@ format(const struct cmd *f, int argc, char *argv[])
 	    (ms << 4) + lbaf);
 
 	if (ioctl(fd, NVME_PASSTHROUGH_CMD, &pt) < 0)
-		err(1, "format request failed");
+		err(EX_IOERR, "format request failed");
 
 	if (nvme_completion_is_error(&pt.cpl))
-		errx(1, "format request returned error");
+		errx(EX_IOERR, "format request returned error");
 	close(fd);
 	exit(0);
 }

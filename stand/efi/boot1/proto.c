@@ -38,12 +38,14 @@ __FBSDID("$FreeBSD$");
 static EFI_GUID BlockIoProtocolGUID = BLOCK_IO_PROTOCOL;
 static EFI_GUID DevicePathGUID = DEVICE_PATH_PROTOCOL;
 
+#ifndef EFI_DEBUG
 static const char *prio_str[] = {
 	"error",
 	"not supported",
 	"good",
 	"better"
 };
+#endif
 
 /*
  * probe_handle determines if the passed handle represents a logical partition
@@ -61,7 +63,7 @@ probe_handle(EFI_HANDLE h, EFI_DEVICE_PATH *imgpath)
 	int preferred;
 
 	/* Figure out if we're dealing with an actual partition. */
-	status = BS->HandleProtocol(h, &DevicePathGUID, (void **)&devpath);
+	status = OpenProtocolByHandle(h, &DevicePathGUID, (void **)&devpath);
 	if (status == EFI_UNSUPPORTED)
 		return (0);
 
@@ -77,7 +79,7 @@ probe_handle(EFI_HANDLE h, EFI_DEVICE_PATH *imgpath)
 		efi_free_devpath_name(text);
 	}
 #endif
-	status = BS->HandleProtocol(h, &BlockIoProtocolGUID, (void **)&blkio);
+	status = OpenProtocolByHandle(h, &BlockIoProtocolGUID, (void **)&blkio);
 	if (status == EFI_UNSUPPORTED)
 		return (0);
 

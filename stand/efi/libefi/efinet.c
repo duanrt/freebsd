@@ -286,7 +286,7 @@ efinet_init(struct iodesc *desc, void *machdep_hint)
 	}
 
 	h = nif->nif_driver->netif_ifs[nif->nif_unit].dif_private;
-	status = BS->HandleProtocol(h, &sn_guid, (VOID **)&nif->nif_devdata);
+	status = OpenProtocolByHandle(h, &sn_guid, (void **)&nif->nif_devdata);
 	if (status != EFI_SUCCESS) {
 		printf("net%d: cannot fetch interface data (status=%lu)\n",
 		    nif->nif_unit, EFI_ERROR_CODE(status));
@@ -371,6 +371,8 @@ efinet_dev_init()
 	status = BS->LocateHandle(ByProtocol, &sn_guid, NULL, &sz, NULL);
 	if (status == EFI_BUFFER_TOO_SMALL) {
 		handles = (EFI_HANDLE *)malloc(sz);
+		if (handles == NULL)
+			return (ENOMEM);
 		status = BS->LocateHandle(ByProtocol, &sn_guid, NULL, &sz,
 		    handles);
 		if (EFI_ERROR(status))

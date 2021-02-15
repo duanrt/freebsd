@@ -47,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysctl.h>
 
 #include <geom/geom.h>
+#include <geom/geom_dbg.h>
 #include <geom/mirror/g_mirror.h>
 
 FEATURE(geom_mirror, "GEOM mirroring support");
@@ -54,7 +55,7 @@ FEATURE(geom_mirror, "GEOM mirroring support");
 static MALLOC_DEFINE(M_MIRROR, "mirror_data", "GEOM_MIRROR Data");
 
 SYSCTL_DECL(_kern_geom);
-static SYSCTL_NODE(_kern_geom, OID_AUTO, mirror, CTLFLAG_RW, 0,
+static SYSCTL_NODE(_kern_geom, OID_AUTO, mirror, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "GEOM_MIRROR stuff");
 int g_mirror_debug = 0;
 SYSCTL_INT(_kern_geom_mirror, OID_AUTO, debug, CTLFLAG_RWTUN, &g_mirror_debug, 0,
@@ -109,7 +110,6 @@ struct g_class g_mirror_class = {
 	.resize = g_mirror_resize
 };
 
-
 static void g_mirror_destroy_provider(struct g_mirror_softc *sc);
 static int g_mirror_update_disk(struct g_mirror_disk *disk, u_int state);
 static void g_mirror_update_device(struct g_mirror_softc *sc, bool force);
@@ -123,7 +123,6 @@ static void g_mirror_sync_stop(struct g_mirror_disk *disk, int type);
 static void g_mirror_register_request(struct g_mirror_softc *sc,
     struct bio *bp);
 static void g_mirror_sync_release(struct g_mirror_softc *sc);
-
 
 static const char *
 g_mirror_disk_state2str(int state)
@@ -924,7 +923,8 @@ g_mirror_regular_request_error(struct g_mirror_softc *sc,
     struct g_mirror_disk *disk, struct bio *bp)
 {
 
-	if (bp->bio_cmd == BIO_FLUSH && bp->bio_error == EOPNOTSUPP)
+	if ((bp->bio_cmd == BIO_FLUSH || bp->bio_cmd == BIO_SPEEDUP) &&
+	    bp->bio_error == EOPNOTSUPP)
 		return;
 
 	if ((disk->d_flags & G_MIRROR_DISK_FLAG_BROKEN) == 0) {
@@ -987,6 +987,10 @@ g_mirror_regular_request(struct g_mirror_softc *sc, struct bio *bp)
 		KFAIL_POINT_ERROR(DEBUG_FP, g_mirror_regular_request_flush,
 		    bp->bio_error);
 		break;
+	case BIO_SPEEDUP:
+		KFAIL_POINT_ERROR(DEBUG_FP, g_mirror_regular_request_speedup,
+		    bp->bio_error);
+		break;
 	}
 
 	pbp->bio_inbed++;
@@ -1017,6 +1021,7 @@ g_mirror_regular_request(struct g_mirror_softc *sc, struct bio *bp)
 		case BIO_DELETE:
 		case BIO_WRITE:
 		case BIO_FLUSH:
+		case BIO_SPEEDUP:
 			pbp->bio_inbed--;
 			pbp->bio_children--;
 			break;
@@ -1042,6 +1047,7 @@ g_mirror_regular_request(struct g_mirror_softc *sc, struct bio *bp)
 	case BIO_DELETE:
 	case BIO_WRITE:
 	case BIO_FLUSH:
+	case BIO_SPEEDUP:
 		if (pbp->bio_children == 0) {
 			/*
 			 * All requests failed.
@@ -1148,6 +1154,7 @@ g_mirror_start(struct bio *bp)
 	case BIO_READ:
 	case BIO_WRITE:
 	case BIO_DELETE:
+	case BIO_SPEEDUP:
 	case BIO_FLUSH:
 		break;
 	case BIO_GETATTR:
@@ -1782,6 +1789,7 @@ g_mirror_register_request(struct g_mirror_softc *sc, struct bio *bp)
 		 */
 		TAILQ_INSERT_TAIL(&sc->sc_inflight, bp, bio_queue);
 		return;
+	case BIO_SPEEDUP:
 	case BIO_FLUSH:
 		TAILQ_INIT(&queue);
 		LIST_FOREACH(disk, &sc->sc_disks, d_next) {
@@ -2062,7 +2070,7 @@ g_mirror_sync_reinit(const struct g_mirror_disk *disk, struct bio *bp,
 	bp->bio_to = disk->d_softc->sc_provider;
 	bp->bio_caller1 = (void *)(uintptr_t)idx;
 	bp->bio_offset = offset;
-	bp->bio_length = MIN(MAXPHYS,
+	bp->bio_length = MIN(maxphys,
 	    disk->d_softc->sc_mediasize - bp->bio_offset);
 }
 
@@ -2120,7 +2128,7 @@ g_mirror_sync_start(struct g_mirror_disk *disk)
 		bp = g_alloc_bio();
 		sync->ds_bios[i] = bp;
 
-		bp->bio_data = malloc(MAXPHYS, M_MIRROR, M_WAITOK);
+		bp->bio_data = malloc(maxphys, M_MIRROR, M_WAITOK);
 		bp->bio_caller1 = (void *)(uintptr_t)i;
 		g_mirror_sync_reinit(disk, bp, sync->ds_offset);
 		sync->ds_offset += bp->bio_length;
@@ -3233,9 +3241,11 @@ g_mirror_taste(struct g_class *mp, struct g_provider *pp, int flags __unused)
 	 */
 	gp->orphan = g_mirror_taste_orphan;
 	cp = g_new_consumer(gp);
-	g_attach(cp, pp);
-	error = g_mirror_read_metadata(cp, &md);
-	g_detach(cp);
+	error = g_attach(cp, pp);
+	if (error == 0) {
+		error = g_mirror_read_metadata(cp, &md);
+		g_detach(cp);
+	}
 	g_destroy_consumer(cp);
 	g_destroy_geom(gp);
 	if (error != 0)
@@ -3480,7 +3490,7 @@ g_mirror_shutdown_post_sync(void *arg, int howto)
 	struct g_mirror_softc *sc;
 	int error;
 
-	if (panicstr != NULL)
+	if (KERNEL_PANICKED())
 		return;
 
 	mp = arg;

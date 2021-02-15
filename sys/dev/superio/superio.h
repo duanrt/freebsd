@@ -1,5 +1,7 @@
-/*
- * Copyright (c) 2016 Andriy Gapon
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2019 Andriy Gapon
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,7 +12,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
@@ -32,6 +34,7 @@ typedef enum superio_vendor {
 	SUPERIO_VENDOR_NONE,
 	SUPERIO_VENDOR_ITE,
 	SUPERIO_VENDOR_NUVOTON,
+	SUPERIO_VENDOR_FINTEK,
 	SUPERIO_VENDOR_MAX
 } superio_vendor_t;
 
@@ -56,7 +59,7 @@ device_t superio_find_dev(device_t superio, superio_dev_type_t type,
     int ldn);
 
 enum superio_ivars {
-	SUPERIO_IVAR_LDN = 	10600,
+	SUPERIO_IVAR_LDN =	10600,
 	SUPERIO_IVAR_TYPE,
 	SUPERIO_IVAR_IOBASE,
 	SUPERIO_IVAR_IOBASE2,

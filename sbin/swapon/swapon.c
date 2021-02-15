@@ -45,6 +45,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/disk.h>
+#include <sys/disklabel.h>
 #include <sys/mdioctl.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -541,14 +542,13 @@ swap_on_off_md(const char *name, char *mntops, int doingall)
 				goto err;
 			}
 			p = fgetln(sfd, &linelen);
-			if (p == NULL &&
+			if (p == NULL ||
 			    (linelen < 2 || linelen > sizeof(linebuf))) {
 				warn("mdconfig (attach) unexpected output");
 				ret = NULL;
 				goto err;
 			}
-			strncpy(linebuf, p, linelen);
-			linebuf[linelen - 1] = '\0';
+			strlcpy(linebuf, p, linelen);
 			errno = 0;
 			ul = strtoul(linebuf, &p, 10);
 			if (errno == 0) {
@@ -603,14 +603,13 @@ swap_on_off_md(const char *name, char *mntops, int doingall)
 				goto err;
 			}
 			p = fgetln(sfd, &linelen);
-			if (p == NULL &&
-			    (linelen < 2 || linelen > sizeof(linebuf) - 1)) {
+			if (p == NULL ||
+			    (linelen < 2 || linelen > sizeof(linebuf))) {
 				warn("mdconfig (list) unexpected output");
 				ret = NULL;
 				goto err;
 			}
-			strncpy(linebuf, p, linelen);
-			linebuf[linelen - 1] = '\0';
+			strlcpy(linebuf, p, linelen);
 			p = strchr(linebuf, ' ');
 			if (p != NULL)
 				*p = '\0';
@@ -761,8 +760,8 @@ swapon_trim(const char *name)
 	} else
 		errx(1, "%s has an invalid file type", name);
 	/* Trim the device. */
-	ioarg[0] = 0;
-	ioarg[1] = sz;
+	ioarg[0] = BBSIZE;
+	ioarg[1] = sz - BBSIZE;
 	if (ioctl(fd, DIOCGDELETE, ioarg) != 0)
 		warn("ioctl(DIOCGDELETE)");
 

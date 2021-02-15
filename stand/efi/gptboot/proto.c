@@ -42,7 +42,7 @@ __FBSDID("$FreeBSD$");
 #include "gpt.h"
 #include <sys/gpt.h>
 static const uuid_t freebsd_ufs_uuid = GPT_ENT_TYPE_FREEBSD_UFS;
-static char secbuf[4096];
+static char secbuf[4096] __aligned(4096);
 static struct dsk dsk;
 static dev_info_t *devices = NULL;
 static dev_info_t *raw_device = NULL;
@@ -146,7 +146,7 @@ probe_handle(EFI_HANDLE h, EFI_DEVICE_PATH *imgpath)
 	EFI_STATUS status;
 
 	/* Figure out if we're dealing with an actual partition. */
-	status = BS->HandleProtocol(h, &DevicePathGUID, (void **)&devpath);
+	status = OpenProtocolByHandle(h, &DevicePathGUID, (void **)&devpath);
 	if (status != EFI_SUCCESS)
 		return;
 #ifdef EFI_DEBUG
@@ -169,7 +169,7 @@ probe_handle(EFI_HANDLE h, EFI_DEVICE_PATH *imgpath)
 			return;
 		}
 	}
-	status = BS->HandleProtocol(h, &BlockIoProtocolGUID, (void **)&blkio);
+	status = OpenProtocolByHandle(h, &BlockIoProtocolGUID, (void **)&blkio);
 	if (status != EFI_SUCCESS) {
 		DPRINTF("Can't get the block I/O protocol block\n");
 		return;

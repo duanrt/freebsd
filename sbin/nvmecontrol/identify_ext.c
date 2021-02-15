@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2012-2013 Intel Corporation
  * All rights reserved.
+ * Copyright (C) 2018-2019 Alexander Motin <mav@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,6 +56,7 @@ nvme_print_controller(struct nvme_controller_data *cdata)
 	uint8_t ns_smart;
 	uint8_t sqes_max, sqes_min;
 	uint8_t cqes_max, cqes_min;
+	uint8_t fwug;
 
 	oncs = cdata->oncs;
 	compare = (oncs >> NVME_CTRLR_DATA_ONCS_COMPARE_SHIFT) &
@@ -78,6 +80,7 @@ nvme_print_controller(struct nvme_controller_data *cdata)
 		NVME_CTRLR_DATA_FRMW_NUM_SLOTS_MASK;
 	fw_slot1_ro = (cdata->frmw >> NVME_CTRLR_DATA_FRMW_SLOT1_RO_SHIFT) &
 		NVME_CTRLR_DATA_FRMW_SLOT1_RO_MASK;
+	fwug = cdata->fwug;
 
 	ns_smart = (cdata->lpa >> NVME_CTRLR_DATA_LPA_NS_SMART_SHIFT) &
 		NVME_CTRLR_DATA_LPA_NS_SMART_MASK;
@@ -120,7 +123,7 @@ nvme_print_controller(struct nvme_controller_data *cdata)
 	if (cdata->mdts == 0)
 		printf("Unlimited\n");
 	else
-		printf("%ld\n", PAGE_SIZE * (1L << cdata->mdts));
+		printf("%ld bytes\n", PAGE_SIZE * (1L << cdata->mdts));
 	printf("Controller ID:               0x%04x\n", cdata->ctrlr_id);
 	printf("Version:                     %d.%d.%d\n",
 	    (cdata->ver >> 16) & 0xffff, (cdata->ver >> 8) & 0xff,
@@ -159,11 +162,11 @@ nvme_print_controller(struct nvme_controller_data *cdata)
 	if (cdata->sanicap != 0) {
 		printf("%s%s%s\n",
 		    ((cdata->sanicap >> NVME_CTRLR_DATA_SANICAP_CES_SHIFT) &
-		     NVME_CTRLR_DATA_SANICAP_CES_SHIFT) ? "crypto, " : "",
+		     NVME_CTRLR_DATA_SANICAP_CES_MASK) ? "crypto, " : "",
 		    ((cdata->sanicap >> NVME_CTRLR_DATA_SANICAP_BES_SHIFT) &
-		     NVME_CTRLR_DATA_SANICAP_BES_SHIFT) ? "block, " : "",
+		     NVME_CTRLR_DATA_SANICAP_BES_MASK) ? "block, " : "",
 		    ((cdata->sanicap >> NVME_CTRLR_DATA_SANICAP_OWS_SHIFT) &
-		     NVME_CTRLR_DATA_SANICAP_OWS_SHIFT) ? "overwrite" : "");
+		     NVME_CTRLR_DATA_SANICAP_OWS_MASK) ? "overwrite" : "");
 	} else {
 		printf("Not Supported\n");
 	}
@@ -183,6 +186,25 @@ nvme_print_controller(struct nvme_controller_data *cdata)
 		ns_smart ? "Yes" : "No");
 	printf("Error Log Page Entries:      %d\n", cdata->elpe+1);
 	printf("Number of Power States:      %d\n", cdata->npss+1);
+	if (cdata->ver >= 0x010200) {
+		printf("Total NVM Capacity:          %s bytes\n",
+		    uint128_to_str(to128(cdata->untncap.tnvmcap),
+		    cbuf, sizeof(cbuf)));
+		printf("Unallocated NVM Capacity:    %s bytes\n",
+		    uint128_to_str(to128(cdata->untncap.unvmcap),
+		    cbuf, sizeof(cbuf)));
+	}
+	printf("Firmware Update Granularity: %02x ", fwug);
+	if (fwug == 0)
+		printf("(Not Reported)\n");
+	else if (fwug == 0xFF)
+		printf("(No Granularity)\n");
+	else
+		printf("(%d bytes)\n", ((uint32_t)fwug << 12));
+	printf("Host Buffer Preferred Size:  %llu bytes\n",
+	    (long long unsigned)cdata->hmpre * 4096);
+	printf("Host Buffer Minimum Size:    %llu bytes\n",
+	    (long long unsigned)cdata->hmmin * 4096);
 
 	printf("\n");
 	printf("NVM Command Set Attributes\n");
@@ -234,13 +256,6 @@ nvme_print_controller(struct nvme_controller_data *cdata)
 	    (t == NVME_CTRLR_DATA_VWC_ALL_NO) ? ", no flush all" :
 	    (t == NVME_CTRLR_DATA_VWC_ALL_YES) ? ", flush all" : "");
 
-	if (nsmgmt) {
-		printf("\n");
-		printf("Namespace Drive Attributes\n");
-		printf("==========================\n");
-		printf("NVM total cap:               %s\n",
-			   uint128_to_str(to128(cdata->untncap.tnvmcap), cbuf, sizeof(cbuf)));
-		printf("NVM unallocated cap:         %s\n",
-			   uint128_to_str(to128(cdata->untncap.unvmcap), cbuf, sizeof(cbuf)));
-	}
+	if (cdata->ver >= 0x010201)
+		printf("\nNVM Subsystem Name:          %.256s\n", cdata->subnqn);
 }
